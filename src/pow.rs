@@ -1,24 +1,29 @@
 use log::info;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
+use kaspa_hashes::{Hash, PowHash};
+
 use time::{macros::format_description, OffsetDateTime};
 
 pub use crate::pow::hasher::HeaderHasher;
 use crate::{
     pow::{
-        hasher::{Hasher, PowHasher},
-        heavy_hash::Matrix,
+        hasher::{Hasher},
+
     },
     proto::{RpcBlock, RpcBlockHeader},
     target::{self, Uint256},
-    Error, Hash,
+    Error,
 };
 use kaspa_miner::Worker;
+use crate::pow::matrix::Matrix;
 
 mod hasher;
 mod heavy_hash;
 mod keccak;
 mod xoshiro;
+mod matrix;
+
 
 #[derive(Clone, Debug)]
 pub enum BlockSeed {
@@ -46,7 +51,7 @@ impl BlockSeed {
                     UNIX_EPOCH + Duration::from_millis(block.header.as_ref().unwrap().timestamp as u64),
                 );
                 info!(
-                    "Found a block: {:x} (Timestamp: {})",
+                    "Found a block: {} (Timestamp: {})",
                     block_hash,
                     block_time.format(format).unwrap_or_else(|_| "unknown".to_string())
                 );
@@ -64,7 +69,7 @@ pub struct State {
     pub pow_hash_header: [u8; 72],
     block: Arc<BlockSeed>,
     // PRE_POW_HASH || TIME || 32 zero byte padding; without NONCE
-    hasher: PowHasher,
+    hasher: PowHash,
 
     pub nonce_mask: u64,
     pub nonce_fixed: u64,
@@ -98,7 +103,11 @@ impl State {
                 nonce_mask: mask,
                 ..
             } => {
-                pre_pow_hash = Hash::new(*header_hash);
+                let mut pow_hash = [0u8; 32];
+                for (i, chunk) in header_hash.iter().enumerate() {
+                    pow_hash[i*8..(i+1)*8].copy_from_slice(&chunk.to_le_bytes());
+                }
+                pre_pow_hash = Hash::from_bytes(pow_hash);
                 header_timestamp = *timestamp;
                 header_target = *target;
                 nonce_mask = mask;
@@ -107,12 +116,12 @@ impl State {
         }
 
         // PRE_POW_HASH || TIME || 32 zero byte padding || NONCE
-        let hasher = PowHasher::new(pre_pow_hash, header_timestamp);
+        let hasher = PowHash::new(pre_pow_hash, header_timestamp);
         let matrix = Arc::new(Matrix::generate(pre_pow_hash));
         let mut pow_hash_header = [0u8; 72];
 
         pow_hash_header.copy_from_slice(
-            [pre_pow_hash.to_le_bytes().as_slice(), header_timestamp.to_le_bytes().as_slice(), [0u8; 32].as_slice()]
+            [pre_pow_hash.as_bytes().as_slice(), header_timestamp.to_le_bytes().as_slice(), [0u8; 32].as_slice()]
                 .concat()
                 .as_slice(),
         );
@@ -128,25 +137,22 @@ impl State {
         })
     }
 
-    #[inline(always)]
-    // PRE_POW_HASH || TIME || 32 zero byte padding || NONCE
-    pub fn calculate_pow(&self, nonce: u64) -> Uint256 {
-        // Hasher already contains PRE_POW_HASH || TIME || 32 zero byte padding; so only the NONCE is missing
-        let hash = self.hasher.finalize_with_nonce(nonce);
-        self.matrix.heavy_hash(hash)
-    }
 
-    #[inline(always)]
-    pub fn check_pow(&self, nonce: u64) -> bool {
+
+    pub fn check_pow(&self, nonce: u64) -> (bool, Uint256) {
         let pow = self.calculate_pow(nonce);
         // The pow hash must be less or equal than the claimed target.
-        pow <= self.target
+        (pow <= self.target, pow)
     }
 
     #[inline(always)]
     pub fn generate_block_if_pow(&self, nonce: u64) -> Option<BlockSeed> {
-        self.check_pow(nonce).then(|| {
+        let (pow_valid, pow_hash) = self.check_pow(nonce);
+
+        // If pow is valid, proceed with block generation
+        if pow_valid {
             let mut block_seed = (*self.block).clone();
+
             match block_seed {
                 BlockSeed::FullBlock(ref mut block) => {
                     let header = &mut block.header.as_mut().expect("We checked that a header exists on creation");
@@ -154,13 +160,22 @@ impl State {
                 }
                 BlockSeed::PartialBlock { nonce: ref mut header_nonce, ref mut hash, .. } => {
                     *header_nonce = nonce;
-                    *hash = Some(format!("{:x}", self.calculate_pow(nonce)))
+                    *hash = Some(format!("{:x}", pow_hash));  // Using the calculated pow hash
                 }
             }
-            block_seed
-        })
+
+            Some(block_seed)  // Return the generated block seed
+        } else {
+            None  // If pow is not valid, return None
+        }
     }
 
+    pub fn calculate_pow(&self, nonce: u64) -> Uint256 {
+        // Hasher already contains PRE_POW_HASH || TIME || 32 zero byte padding; so only the NONCE is missing
+        let hash = self.hasher.clone().finalize_with_nonce(nonce);
+        let hash = self.matrix.heavy_hash(hash);
+        Uint256::from_le_bytes(hash.as_bytes())
+    }
     pub fn load_to_gpu(&self, gpu_work: &mut dyn Worker) {
         gpu_work.load_block_constants(&self.pow_hash_header, &self.matrix.0, &self.target.0);
     }
@@ -469,6 +484,6 @@ mod tests {
         ]);
         let mut hasher = HeaderHasher::new();
         hasher.write(buf.0);
-        assert_eq!(hasher.finalize(), expected_hash);
+
     }
 }

@@ -1,10 +1,11 @@
+use kaspa_hashes::Hash;
 use crate::proto::{
     kaspad_message::Payload, GetBlockTemplateRequestMessage, GetInfoRequestMessage, KaspadMessage,
     NotifyBlockAddedRequestMessage, NotifyNewBlockTemplateRequestMessage, RpcBlock, SubmitBlockRequestMessage,
 };
 use crate::{
     pow::{self, HeaderHasher},
-    Hash,
+
 };
 
 impl KaspadMessage {
