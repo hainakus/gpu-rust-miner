@@ -13,11 +13,11 @@ use std::sync::{Arc, Weak};
 
 static BPS: f32 = 1.;
 
-static PTX_86: &str = include_str!("../resources/kaspa-cuda-sm86.ptx");
-static PTX_75: &str = include_str!("../resources/kaspa-cuda-sm75.ptx");
-static PTX_61: &str = include_str!("../resources/kaspa-cuda-sm61.ptx");
-static PTX_30: &str = include_str!("../resources/kaspa-cuda-sm30.ptx");
-static PTX_20: &str = include_str!("../resources/kaspa-cuda-sm20.ptx");
+static PTX_86: &str = include_str!("../resources/pyrin-cuda-sm86.ptx");
+static PTX_75: &str = include_str!("../resources/pyrin-cuda-sm75.ptx");
+static PTX_61: &str = include_str!("../resources/pyrin-cuda-sm61.ptx");
+static PTX_30: &str = include_str!("../resources/pyrin-cuda-sm30.ptx");
+static PTX_20: &str = include_str!("../resources/pyrin-cuda-sm20.ptx");
 
 pub struct Kernel<'kernel> {
     func: Arc<Function<'kernel>>,
@@ -175,7 +175,7 @@ impl<'gpu> CudaGPUWorker<'gpu> {
                 error!("Error loading PTX. Make sure you have the updated driver for you devices");
                 e
             })?);
-        } else if major >= 3 {
+        }/* else if major >= 3 {
             _module = Arc::new(Module::from_ptx(PTX_30, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
                 error!("Error loading PTX. Make sure you have the updated driver for you devices");
                 e
@@ -185,7 +185,7 @@ impl<'gpu> CudaGPUWorker<'gpu> {
                 error!("Error loading PTX. Make sure you have the updated driver for you devices");
                 e
             })?);
-        } else {
+        }*/ else {
             return Err("Cuda compute version not supported".into());
         }
 
